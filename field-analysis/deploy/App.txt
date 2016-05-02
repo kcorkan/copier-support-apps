@@ -3,11 +3,11 @@
 <head>
     <title>Field Analysis</title>
     <!--  (c) 2015 Rally Software Development Corp.  All Rights Reserved. -->
-    <!--  Build Date: Fri Feb 26 2016 15:25:55 GMT-0700 (MST) -->
+    <!--  Build Date: Mon May 02 2016 12:12:41 GMT-0600 (MDT) -->
     
     <script type="text/javascript">
-        var APP_BUILD_DATE = "Fri Feb 26 2016 15:25:55 GMT-0700 (MST)";
-        var CHECKSUM = 4861837823;
+        var APP_BUILD_DATE = "Mon May 02 2016 12:12:41 GMT-0600 (MDT)";
+        var CHECKSUM = 6081229273;
     </script>
     
     <script type="text/javascript" src="/apps/2.0/sdk.js"></script>
@@ -27,12 +27,12 @@ Ext.define('Rally.technicalservices.ModelFieldChecker',{
         });
         return custom_fields;
     },
-    _getDropdownFields: function(model){
+    _getNonCustomFields: function(model){
         var whitelistFields = ['Project','Tags','Iteration','Release','Owner','Tester','SubmittedBy'];
         var dropdown_fields = _.filter(model.getFields(), function (field) {
             if (field && field.attributeDefinition) {
                 if (!Ext.Array.contains(whitelistFields, field.name)){
-                    return field.attributeDefinition.Constrained && !field.attributeDefinition.ReadOnly && !field.hidden && !field.attributeDefinition.Custom;
+                    return !field.attributeDefinition.ReadOnly && !field.hidden && !field.attributeDefinition.Custom;
                 }
             }
         });
@@ -42,14 +42,16 @@ Ext.define('Rally.technicalservices.ModelFieldChecker',{
         var deferred = Ext.create('Deft.Deferred');
 
         var custom = this._getCustomFields(this.model),
-            dropdown = this._getDropdownFields(this.model),
+            dropdown = this._getNonCustomFields(this.model),
             fields = custom.concat(dropdown);
+
 
         this._fetchWsapiRecords(this._getWsapiConfig(this.model, fields)).then({
             success: function(records){
-                console.log('fetchData Success', records);
-                var data = this._mungeModelRecords(records, custom, dropdown);
-                deferred.resolve(data);
+                this.data = this._mungeModelRecords(records, custom, dropdown);
+                this.recordCount = records.length;
+                this.modelName = this.model.getName();
+                deferred.resolve(this);
             },
             failure: function(msg){
                 deferred.reject(msg);
@@ -61,9 +63,11 @@ Ext.define('Rally.technicalservices.ModelFieldChecker',{
     },
     _mungeModelRecords: function(records, customFields, dropdownFields){
         var data = [],
-            model = this.model ;
+            model = this.model,
+            modelName;
 
         _.each(customFields, function(c){
+            modelName = c.modelType;
             var vals = this._getFieldValues(records, c.name, c.attributeDefinition.Constrained);
             data.push({model: c.modelType, field: c, fieldName: c.name, fieldDisplayName: c.displayName, fieldType: c.attributeDefinition.AttributeType,  totalCount: vals.count, uniqueValues: vals.values});
         }, this);
@@ -73,32 +77,49 @@ Ext.define('Rally.technicalservices.ModelFieldChecker',{
             data.push({model: c.modelType, field: c, fieldName: c.name, fieldDisplayName: c.displayName, fieldType: c.attributeDefinition.AttributeType,  totalCount: vals.count, uniqueValues: vals.values});
         }, this);
 
+
         return data;
 
     },
     _getFieldValues: function(records, fieldName, constrained){
         var vals = {},
-            count = 0;
+            count = 0,
+            fieldType = null,
+            isConstrained = false;
+
+        if (records && records.length > 0){
+            fieldType = records[0].getField(fieldName) && records[0].getField(fieldName).attributeDefinition &&
+                records[0].getField(fieldName).attributeDefinition.AttributeType;
+            isConstrained = records[0].getField(fieldName).attributeDefinition.Constrained;
+        }
 
         _.each(records, function(r){
             var val = r.get(fieldName);
             if (val && (Ext.isObject(val) || val.length > 0)){
-                
-                if (Ext.isObject(val)){
-                    val = val._refObjectName || val._tagsNameArray;
+                console.log('fieldType', fieldType, val);
+
+                if (Ext.isEmpty(val)){
+                    val = '';
                 }
 
-                if (!Ext.isArray(val)){
+                if (Ext.isObject(val)){
+                    val = val._refObjectName || val._tagsNameArray || [];
+                }
+
+                if (val && !Ext.isArray(val) && val.length > 0){
                     val = [val];
                 }
+
                 if (val.length > 0){
                     count++;
-                    _.each(val, function(mv){
-                        if (!vals[mv]){
-                            vals[mv] = 0;
-                        }
-                        vals[mv]++;
-                    });
+                    if (isConstrained){
+                        _.each(val, function(mv){
+                            if (!vals[mv]){
+                                vals[mv] = 0;
+                            }
+                            vals[mv]++;
+                        });
+                    }
                 }
             }
 
@@ -314,6 +335,37 @@ Ext.define('Rally.technicalservices.Logger',{
 
 });
 
+Ext.define('SummaryTemplate',{
+    extend: 'Ext.XTemplate',
+
+    constructor: function(config) {
+        var templateConfig = [
+            '<tpl><tpl for=".">{[this.getModelName(values)]}: {recordCount} <br/></tpl>',
+            '<b>Total Artifact Count: {[this.getTotalCount(values)]}</b></tpl>',
+            {
+                getModelName: function(values){
+                    var modelParts = values.modelName.split('.');
+                    if (Ext.isArray(modelParts) && modelParts.length > 0){
+                        return modelParts.slice(-1);
+                    }
+                    return modelParts;
+
+                },
+                getTotalCount: function(values){
+
+                    var count = 0;
+                    _.each(values, function(obj){
+                        count += obj.recordCount;
+                    });
+                    return count;
+                }
+            },
+            config
+        ];
+        return this.callParent(templateConfig);
+    }
+});
+
 Ext.define("FieldAnalysis", {
     extend: 'Rally.app.App',
     componentCls: 'app',
@@ -391,8 +443,10 @@ Ext.define("FieldAnalysis", {
         });
         return deferred.promise;
     },
-    _displayGrid: function(data){
+    _displayGrid: function(obj){
+        var data = _.flatten(_.pluck(obj, 'data'));
         this.logger.log('data', data);
+
         var store = Ext.create('Rally.data.custom.Store',{
             data: data,
             fields: ['model','fieldName','fieldDisplayName','fieldType','totalCount', 'uniqueValues'],
@@ -405,6 +459,14 @@ Ext.define("FieldAnalysis", {
 
         //data.push({model: model.name, field: c, fieldName: c.name, fieldDisplayName: c.attributeDefinition.displayName, fieldType: c.attributeDefinition.AttributeType,  totalCount: vals.length, uniqueValues: _.uniq(vals)});
         var fieldNames =  ['model','fieldName','fieldDisplayName','fieldType','totalCount', 'uniqueValues'];
+
+
+        var tpl = this.down('#display_box').add({
+            xtype: 'container',
+            tpl: Ext.create('SummaryTemplate')
+        });
+
+        tpl.update(obj);
 
         this.down('#display_box').add({
             xtype: 'rallygrid',
@@ -437,7 +499,15 @@ Ext.define("FieldAnalysis", {
             dataIndex: 'uniqueValues',
             flex: 1,
             renderer: function(v,m,r){
-                return _.uniq(v).join('</br>');
+                if (v.length > 0){
+                    return _.uniq(v).join('</br>');
+                }
+                if (r.get('totalCount') > 0){
+                    return '<em>not constrained</em>';
+                }
+                return '';
+
+
             }
         }];
     },

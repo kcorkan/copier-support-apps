@@ -75,8 +75,10 @@ Ext.define("FieldAnalysis", {
         });
         return deferred.promise;
     },
-    _displayGrid: function(data){
+    _displayGrid: function(obj){
+        var data = _.flatten(_.pluck(obj, 'data'));
         this.logger.log('data', data);
+
         var store = Ext.create('Rally.data.custom.Store',{
             data: data,
             fields: ['model','fieldName','fieldDisplayName','fieldType','totalCount', 'uniqueValues'],
@@ -89,6 +91,14 @@ Ext.define("FieldAnalysis", {
 
         //data.push({model: model.name, field: c, fieldName: c.name, fieldDisplayName: c.attributeDefinition.displayName, fieldType: c.attributeDefinition.AttributeType,  totalCount: vals.length, uniqueValues: _.uniq(vals)});
         var fieldNames =  ['model','fieldName','fieldDisplayName','fieldType','totalCount', 'uniqueValues'];
+
+
+        var tpl = this.down('#display_box').add({
+            xtype: 'container',
+            tpl: Ext.create('SummaryTemplate')
+        });
+
+        tpl.update(obj);
 
         this.down('#display_box').add({
             xtype: 'rallygrid',

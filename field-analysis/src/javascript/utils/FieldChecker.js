@@ -15,7 +15,7 @@ Ext.define('Rally.technicalservices.ModelFieldChecker',{
         var dropdown_fields = _.filter(model.getFields(), function (field) {
             if (field && field.attributeDefinition) {
                 if (!Ext.Array.contains(whitelistFields, field.name)){
-                    return field.attributeDefinition.Constrained && !field.attributeDefinition.ReadOnly && !field.hidden && !field.attributeDefinition.Custom;
+                    return !field.attributeDefinition.ReadOnly && !field.hidden && !field.attributeDefinition.Custom;
                 }
             }
         });
@@ -31,8 +31,10 @@ Ext.define('Rally.technicalservices.ModelFieldChecker',{
 
         this._fetchWsapiRecords(this._getWsapiConfig(this.model, fields)).then({
             success: function(records){
-                var data = this._mungeModelRecords(records, custom, dropdown);
-                deferred.resolve(data);
+                this.data = this._mungeModelRecords(records, custom, dropdown);
+                this.recordCount = records.length;
+                this.modelName = this.model.getName();
+                deferred.resolve(this);
             },
             failure: function(msg){
                 deferred.reject(msg);
@@ -64,11 +66,20 @@ Ext.define('Rally.technicalservices.ModelFieldChecker',{
     },
     _getFieldValues: function(records, fieldName, constrained){
         var vals = {},
-            count = 0;
+            count = 0,
+            fieldType = null,
+            isConstrained = false;
+
+        if (records && records.length > 0){
+            fieldType = records[0].getField(fieldName) && records[0].getField(fieldName).attributeDefinition &&
+                records[0].getField(fieldName).attributeDefinition.AttributeType;
+            isConstrained = records[0].getField(fieldName).attributeDefinition.Constrained;
+        }
 
         _.each(records, function(r){
             var val = r.get(fieldName);
             if (val && (Ext.isObject(val) || val.length > 0)){
+                console.log('fieldType', fieldType, val);
 
                 if (Ext.isEmpty(val)){
                     val = '';
@@ -81,14 +92,17 @@ Ext.define('Rally.technicalservices.ModelFieldChecker',{
                 if (val && !Ext.isArray(val) && val.length > 0){
                     val = [val];
                 }
+
                 if (val.length > 0){
                     count++;
-                    _.each(val, function(mv){
-                        if (!vals[mv]){
-                            vals[mv] = 0;
-                        }
-                        vals[mv]++;
-                    });
+                    if (isConstrained){
+                        _.each(val, function(mv){
+                            if (!vals[mv]){
+                                vals[mv] = 0;
+                            }
+                            vals[mv]++;
+                        });
+                    }
                 }
             }
 
